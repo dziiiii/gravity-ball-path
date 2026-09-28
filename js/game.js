@@ -126,8 +126,9 @@ export class GravityBallGame {
     sun.shadow.camera.top = 14;
     sun.shadow.camera.bottom = -14;
     sun.shadow.bias = -0.00025;
-    sun.shadow.normalBias = 0.03;
-    sun.shadow.radius = 3.5;
+    sun.shadow.normalBias = 0.04;
+    // 半影不要太大，否则护栏阴影会拖成一条灰带
+    sun.shadow.radius = 1.6;
     this.scene.add(sun);
     this.sun = sun;
 
@@ -168,12 +169,14 @@ export class GravityBallGame {
       railMat
     );
     leftRail.position.set(-ROAD_HALF + railW / 2, railH / 2 - 0.12, ROAD_LENGTH / 2 - 10);
-    leftRail.castShadow = true;
+    // 长护栏不投影：阴影相机只有小球附近，长方体会拖出怪影
+    leftRail.castShadow = false;
     leftRail.receiveShadow = true;
     this.world.add(leftRail);
 
     const rightRail = leftRail.clone();
     rightRail.position.x = ROAD_HALF - railW / 2;
+    rightRail.castShadow = false;
     this.world.add(rightRail);
 
     // 道路边缘浅色带
@@ -184,10 +187,12 @@ export class GravityBallGame {
     });
     for (const side of [-1, 1]) {
       const edge = new THREE.Mesh(
-        new THREE.BoxGeometry(0.62, 0.1, ROAD_LENGTH),
+        new THREE.BoxGeometry(0.72, 0.08, ROAD_LENGTH),
         edgeMat
       );
-      edge.position.set(side * (ROAD_HALF - 0.58), 0.01, ROAD_LENGTH / 2 - 10);
+      // 与路面几乎齐平，避免立起一道亮边
+      edge.position.set(side * (ROAD_HALF - 0.62), -0.01, ROAD_LENGTH / 2 - 10);
+      edge.castShadow = false;
       edge.receiveShadow = true;
       this.world.add(edge);
     }
