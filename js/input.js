@@ -122,10 +122,11 @@ export class InputController {
     const maxSide = 14;
     const maxFB = 12;
 
-    // 手感：往左倾 → 球往左；往远端倾 → 球往前
+    // 手感：往左倾 → 球往左；往前倾（远端压低）→ 球往前
     // W3C：gamma 负 = 左边下沉，beta 正 = 顶部朝地面
+    // 实机上两个轴都要取反，才符合“盘子往哪倾球往哪滚”
     const gx = clamp(-dGamma / maxSide, -1, 1);
-    const gz = clamp(dBeta / maxFB, -1, 1);
+    const gz = clamp(-dBeta / maxFB, -1, 1);
 
     // 小死区 + 轻微平滑，降低抖动
     const dead = 0.04;
