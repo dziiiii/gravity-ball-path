@@ -20,16 +20,36 @@ const COIN_R = 0.45;
 const FALL_LIMIT = -8;
 
 const COLORS = {
-  sky: 0x8aa0b5,
-  fog: 0x8aa0b5,
-  road: 0xe8e2d6,
-  roadSide: 0xcfc6b6,
-  rail: 0xd9d0c0,
-  hole: 0x14171c,
-  coin: 0xf5c542,
-  ball: 0xf2f2f2,
-  coinRing: 0xe0a91a,
+  sky: 0x9aafc2,
+  fog: 0x9aafc2,
+  road: 0xebe4d8,
+  roadSide: 0xd4cbb9,
+  rail: 0xe2d8c6,
+  hole: 0x0b0d11,
+  coin: 0xf0c14a,
+  coinRing: 0xd4a017,
+  ball: 0xf7f4ef,
+  holeRim: 0xb7ac99,
 };
+
+/** 柔和径向阴影贴图（接触阴影 / 洞口暗部） */
+function makeRadialTexture(inner = 0, outer = 0.35, size = 128) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(
+    size / 2, size / 2, size * 0.08,
+    size / 2, size / 2, size * 0.5
+  );
+  g.addColorStop(0, `rgba(0,0,0,${inner})`);
+  g.addColorStop(0.55, `rgba(0,0,0,${outer * 0.55})`);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 
 // ---------- 场景 ----------
 export class GravityBallGame {
@@ -70,12 +90,13 @@ export class GravityBallGame {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.08;
   }
 
   _initScene() {
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(COLORS.fog, 18, 78);
+    // 薄雾：远端渐隐，纵深更干净
+    this.scene.fog = new THREE.Fog(COLORS.fog, 12, 70);
 
     this.camera = new THREE.PerspectiveCamera(
       58,
@@ -83,27 +104,36 @@ export class GravityBallGame {
       0.1,
       120
     );
-    this.camera.position.set(0, 5.2, -7.5);
-    this.camera.lookAt(0, 0.6, 4);
+    this.camera.position.set(0, 5.0, -7.2);
+    this.camera.lookAt(0, 0.55, 4);
 
-    const ambient = new THREE.AmbientLight(0xdde7f2, 0.72);
+    // 天空光 + 地面反光，替代硬环境光
+    const hemi = new THREE.HemisphereLight(0xc9d8e8, 0xd9cfc0, 0.85);
+    this.scene.add(hemi);
+
+    const ambient = new THREE.AmbientLight(0xe8eef6, 0.35);
     this.scene.add(ambient);
 
-    const sun = new THREE.DirectionalLight(0xfff2dd, 1.15);
-    sun.position.set(10, 18, -6);
+    // 主光：略偏暖、软阴影
+    const sun = new THREE.DirectionalLight(0xfff0dc, 1.35);
+    sun.position.set(8, 16, -4);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 60;
-    sun.shadow.camera.left = -16;
-    sun.shadow.camera.right = 16;
-    sun.shadow.camera.top = 20;
-    sun.shadow.camera.bottom = -20;
+    sun.shadow.camera.far = 50;
+    sun.shadow.camera.left = -12;
+    sun.shadow.camera.right = 12;
+    sun.shadow.camera.top = 14;
+    sun.shadow.camera.bottom = -14;
+    sun.shadow.bias = -0.00025;
+    sun.shadow.normalBias = 0.03;
+    sun.shadow.radius = 3.5;
     this.scene.add(sun);
     this.sun = sun;
 
-    const fill = new THREE.DirectionalLight(0xbfd4e8, 0.35);
-    fill.position.set(-8, 10, 12);
+    // 冷色补光，压脏黄
+    const fill = new THREE.DirectionalLight(0xb7c9dc, 0.42);
+    fill.position.set(-10, 8, 10);
     this.scene.add(fill);
   }
 
@@ -114,8 +144,8 @@ export class GravityBallGame {
     // 道路主面
     const roadMat = new THREE.MeshStandardMaterial({
       color: COLORS.road,
-      roughness: 0.92,
-      metalness: 0.02,
+      roughness: 0.88,
+      metalness: 0.03,
     });
     const road = new THREE.Mesh(
       new THREE.BoxGeometry(ROAD_WIDTH, 0.35, ROAD_LENGTH),
@@ -125,19 +155,19 @@ export class GravityBallGame {
     road.receiveShadow = true;
     this.world.add(road);
 
-    // 两侧护栏（浅槽感）
+    // 两侧护栏（圆角感用略高倒角盒近似）
     const railMat = new THREE.MeshStandardMaterial({
       color: COLORS.rail,
-      roughness: 0.88,
+      roughness: 0.82,
       metalness: 0.04,
     });
-    const railH = 0.55;
-    const railW = 0.35;
+    const railH = 0.52;
+    const railW = 0.38;
     const leftRail = new THREE.Mesh(
       new THREE.BoxGeometry(railW, railH, ROAD_LENGTH),
       railMat
     );
-    leftRail.position.set(-ROAD_HALF + railW / 2, railH / 2 - 0.1, ROAD_LENGTH / 2 - 10);
+    leftRail.position.set(-ROAD_HALF + railW / 2, railH / 2 - 0.12, ROAD_LENGTH / 2 - 10);
     leftRail.castShadow = true;
     leftRail.receiveShadow = true;
     this.world.add(leftRail);
@@ -146,7 +176,7 @@ export class GravityBallGame {
     rightRail.position.x = ROAD_HALF - railW / 2;
     this.world.add(rightRail);
 
-    // 道路边缘阴影条，增强“一条路”纵深
+    // 道路边缘浅色带
     const edgeMat = new THREE.MeshStandardMaterial({
       color: COLORS.roadSide,
       roughness: 0.95,
@@ -154,21 +184,19 @@ export class GravityBallGame {
     });
     for (const side of [-1, 1]) {
       const edge = new THREE.Mesh(
-        new THREE.BoxGeometry(0.55, 0.12, ROAD_LENGTH),
+        new THREE.BoxGeometry(0.62, 0.1, ROAD_LENGTH),
         edgeMat
       );
-      edge.position.set(side * (ROAD_HALF - 0.55), 0.02, ROAD_LENGTH / 2 - 10);
+      edge.position.set(side * (ROAD_HALF - 0.58), 0.01, ROAD_LENGTH / 2 - 10);
       edge.receiveShadow = true;
       this.world.add(edge);
     }
 
+    // 洞口柔边阴影贴图
+    const holeAoTex = makeRadialTexture(0.55, 0.75, 128);
+
     // 坑洞
     this.holes = [];
-    const holeMat = new THREE.MeshStandardMaterial({
-      color: COLORS.hole,
-      roughness: 1,
-      metalness: 0,
-    });
     // 确定性布点：先近后远，难度递增
     let z = 10;
     let i = 0;
@@ -185,34 +213,54 @@ export class GravityBallGame {
         const hx = clampX(x);
         const hz = z + (xs.length > 1 ? Math.sin(i * 1.7) * 0.4 : 0);
 
-        // 纯黑洞面（Basic 材质，不受灯光影响，避免被照灰）
+        // 洞外柔阴影，像往下凹
+        const ao = new THREE.Mesh(
+          new THREE.PlaneGeometry(HOLE_R * 2.7, HOLE_R * 2.7),
+          new THREE.MeshBasicMaterial({
+            map: holeAoTex,
+            transparent: true,
+            opacity: 0.55,
+            depthWrite: false,
+          })
+        );
+        ao.rotation.x = -Math.PI / 2;
+        ao.position.set(hx, 0.012, hz);
+        ao.renderOrder = 1;
+        this.world.add(ao);
+
+        // 纯黑洞面
         const hole = new THREE.Mesh(
-          new THREE.CircleGeometry(HOLE_R, 36),
-          new THREE.MeshBasicMaterial({ color: 0x000000 })
+          new THREE.CircleGeometry(HOLE_R, 40),
+          new THREE.MeshBasicMaterial({ color: COLORS.hole })
         );
         hole.rotation.x = -Math.PI / 2;
-        hole.position.set(hx, 0.06, hz);
+        hole.position.set(hx, 0.02, hz);
         hole.renderOrder = 2;
         this.world.add(hole);
 
-        // 内圈更黑，模拟深度
+        // 内圈更深
         const core = new THREE.Mesh(
-          new THREE.CircleGeometry(HOLE_R * 0.72, 28),
-          new THREE.MeshBasicMaterial({ color: 0x000000 })
+          new THREE.CircleGeometry(HOLE_R * 0.7, 32),
+          new THREE.MeshBasicMaterial({ color: 0x050608 })
         );
         core.rotation.x = -Math.PI / 2;
-        core.position.set(hx, 0.065, hz);
+        core.position.set(hx, 0.025, hz);
         core.renderOrder = 3;
         this.world.add(core);
 
         // 坑沿
         const rim = new THREE.Mesh(
-          new THREE.TorusGeometry(HOLE_R * 1.01, 0.07, 8, 36),
-          new THREE.MeshStandardMaterial({ color: 0x9a9080, roughness: 0.95 })
+          new THREE.TorusGeometry(HOLE_R * 1.0, 0.055, 10, 40),
+          new THREE.MeshStandardMaterial({
+            color: COLORS.holeRim,
+            roughness: 0.9,
+            metalness: 0.02,
+          })
         );
         rim.rotation.x = -Math.PI / 2;
-        rim.position.set(hx, 0.055, hz);
-        rim.renderOrder = 1;
+        rim.position.set(hx, 0.035, hz);
+        rim.receiveShadow = true;
+        rim.renderOrder = 4;
         this.world.add(rim);
 
         this.holes.push({ x: hx, z: hz, r: HOLE_R });
@@ -224,17 +272,18 @@ export class GravityBallGame {
 
     // 金币
     this.coins = [];
-    const coinGeo = new THREE.CylinderGeometry(COIN_R, COIN_R, 0.12, 20);
+    const coinGeo = new THREE.CylinderGeometry(COIN_R, COIN_R, 0.11, 28);
     const coinMat = new THREE.MeshStandardMaterial({
       color: COLORS.coin,
-      roughness: 0.45,
-      metalness: 0.35,
+      roughness: 0.32,
+      metalness: 0.55,
     });
     const ringMat = new THREE.MeshStandardMaterial({
       color: COLORS.coinRing,
-      roughness: 0.5,
-      metalness: 0.4,
+      roughness: 0.38,
+      metalness: 0.5,
     });
+    const coinShadowTex = makeRadialTexture(0.35, 0.5, 64);
 
     let cz = 6;
     let ci = 0;
@@ -243,16 +292,32 @@ export class GravityBallGame {
       const coin = new THREE.Group();
       const body = new THREE.Mesh(coinGeo, coinMat);
       body.castShadow = true;
+      body.receiveShadow = true;
       body.rotation.x = Math.PI / 2;
       coin.add(body);
 
       const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(COIN_R * 0.62, 0.045, 8, 20),
+        new THREE.TorusGeometry(COIN_R * 0.62, 0.04, 10, 24),
         ringMat
       );
       ring.rotation.x = Math.PI / 2;
-      ring.position.y = 0.07;
+      ring.position.y = 0.065;
+      ring.castShadow = true;
       coin.add(ring);
+
+      // 金币柔和落地影
+      const cshadow = new THREE.Mesh(
+        new THREE.PlaneGeometry(COIN_R * 2.2, COIN_R * 2.2),
+        new THREE.MeshBasicMaterial({
+          map: coinShadowTex,
+          transparent: true,
+          opacity: 0.28,
+          depthWrite: false,
+        })
+      );
+      cshadow.rotation.x = -Math.PI / 2;
+      cshadow.position.y = -0.42;
+      coin.add(cshadow);
 
       coin.position.set(clampX(lane), 0.55, cz);
       this.world.add(coin);
@@ -261,29 +326,32 @@ export class GravityBallGame {
       ci += 1;
     }
 
-    // 小球
+    // 小球：白瓷哑光
     const ballMat = new THREE.MeshStandardMaterial({
       color: COLORS.ball,
-      roughness: 0.35,
-      metalness: 0.08,
+      roughness: 0.28,
+      metalness: 0.05,
     });
-    this.ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 28, 20), ballMat);
+    this.ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 36, 28), ballMat);
     this.ball.castShadow = true;
+    this.ball.receiveShadow = true;
     this.ball.position.set(0, BALL_R, 0);
     this.world.add(this.ball);
 
-    // 小球接触阴影片（简单）
+    // 小球接触阴影（柔和径向）
+    const ballShadowTex = makeRadialTexture(0.42, 0.55, 96);
     const blob = new THREE.Mesh(
-      new THREE.CircleGeometry(BALL_R * 1.15, 20),
+      new THREE.PlaneGeometry(BALL_R * 2.7, BALL_R * 2.7),
       new THREE.MeshBasicMaterial({
-        color: 0x000000,
+        map: ballShadowTex,
         transparent: true,
-        opacity: 0.18,
+        opacity: 0.42,
         depthWrite: false,
       })
     );
     blob.rotation.x = -Math.PI / 2;
-    blob.position.y = 0.02;
+    blob.position.y = 0.015;
+    blob.renderOrder = 1;
     this.ballBlob = blob;
     this.world.add(blob);
 
@@ -500,28 +568,28 @@ export class GravityBallGame {
   _updateCamera(dt) {
     const ballPos = this.ball.position;
     // 跟在小球后上方，看向前进方向
-    const targetX = ballPos.x * 0.35;
-    const targetY = 5.0 + ballPos.y * 0.15;
-    const targetZ = ballPos.z - 7.2;
+    const targetX = ballPos.x * 0.32;
+    const targetY = 4.7 + ballPos.y * 0.12;
+    const targetZ = ballPos.z - 6.8;
 
     const k = 1 - Math.exp(-6 * dt);
     this.camera.position.x += (targetX - this.camera.position.x) * k;
     this.camera.position.y += (targetY - this.camera.position.y) * k;
     this.camera.position.z += (targetZ - this.camera.position.z) * k;
 
-    this.camera.lookAt(ballPos.x * 0.5, 0.5 + ballPos.y * 0.25, ballPos.z + 6);
+    this.camera.lookAt(ballPos.x * 0.45, 0.45 + ballPos.y * 0.22, ballPos.z + 5.5);
 
-    // 阴影相机跟随
+    // 阴影相机紧贴小球，减少阴影发糊/发碎
     if (this.sun) {
-      this.sun.position.set(ballPos.x + 10, 18, ballPos.z - 6);
-      this.sun.target.position.copy(ballPos);
+      this.sun.position.set(ballPos.x + 7.5, 14, ballPos.z - 5);
+      this.sun.target.position.set(ballPos.x, 0, ballPos.z);
       this.sun.target.updateMatrixWorld();
       this.scene.add(this.sun.target);
     }
 
     // 接触阴影
     if (this.ballBlob && !this.falling) {
-      this.ballBlob.position.set(ballPos.x, 0.02, ballPos.z);
+      this.ballBlob.position.set(ballPos.x, 0.015, ballPos.z);
       this.ballBlob.visible = true;
     } else if (this.ballBlob) {
       this.ballBlob.visible = false;
