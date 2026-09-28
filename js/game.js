@@ -401,10 +401,18 @@ export class GravityBallGame {
     this.score = 0;
     this.distance = 0;
     this.falling = false;
+    this.fallTime = 0;
+    this._deathHole = null;
     this.vel.set(0, 0, 0);
     this.ball.position.set(0, BALL_R, 0);
     this.ball.rotation.set(0, 0, 0);
     this.ball.scale.setScalar(1);
+    this.ball.visible = true;
+    if (this.ballBlob) {
+      this.ballBlob.visible = true;
+      this.ballBlob.scale.setScalar(1);
+      this.ballBlob.material.opacity = 0.42;
+    }
     this._pop = 0;
 
     for (const c of this.coins) {
@@ -427,7 +435,9 @@ export class GravityBallGame {
     if (this.state !== 'playing') return;
     this.state = 'over';
     this.falling = true;
-    this.vel.y = -3.5;
+    this.fallTime = 0;
+    this.vel.set(0, -0.6, 0);
+    // 掉坑瞬间的水平速度清零，后面往洞心收
     this.bestDistance = Math.max(this.bestDistance, Math.floor(this.distance));
 
     this.ui.overDist.textContent = String(Math.floor(this.distance));
@@ -440,7 +450,48 @@ export class GravityBallGame {
         this.ui.overOverlay.hidden = false;
         this.ui.tiltHint.classList.add('is-hidden');
       }
-    }, 450);
+    }, 900);
+  }
+
+  /** 掉坑：滑向洞心并缓慢下沉，避免穿模乱跳 */
+  _updateFall(dt) {
+    this.fallTime += dt;
+    const t = this.fallTime;
+    const hole = this._deathHole;
+    const ball = this.ball;
+
+    if (hole) {
+      // 前 0.25s 轻轻滑到洞心
+      const slide = 1 - Math.exp(-9 * dt);
+      ball.position.x += (hole.x - ball.position.x) * slide;
+      ball.position.z += (hole.z - ball.position.z) * slide;
+    }
+
+    // 越掉越快，但比正常重力柔和
+    this.vel.y -= GRAVITY * 0.42 * dt;
+    if (this.vel.y < -6) this.vel.y = -6;
+    ball.position.y += this.vel.y * dt;
+
+    // 沉入时微微缩小 + 停转
+    const sink = Math.min(1, Math.max(0, (BALL_R - ball.position.y) / (BALL_R * 1.35)));
+    const s = 1 - sink * 0.22;
+    ball.scale.setScalar(s);
+    ball.rotation.x += dt * 1.2 * (1 - sink);
+    ball.rotation.z *= 0.92;
+
+    // 完全没入后藏起来
+    if (ball.position.y < -BALL_R * 1.25) {
+      ball.visible = false;
+      if (this.ballBlob) this.ballBlob.visible = false;
+    }
+
+    // 接触阴影随下沉变淡
+    if (this.ballBlob && this.ballBlob.visible) {
+      this.ballBlob.material.opacity = 0.42 * (1 - sink);
+      this.ballBlob.scale.setScalar(1 - sink * 0.35);
+      this.ballBlob.position.x = ball.position.x;
+      this.ballBlob.position.z = ball.position.z;
+    }
   }
 
   _updateHud() {
@@ -469,8 +520,7 @@ export class GravityBallGame {
     if (this.state === 'playing') {
       this._simulate(dt);
     } else if (this.state === 'over' && this.falling) {
-      this.vel.y -= GRAVITY * dt;
-      this.ball.position.addScaledVector(this.vel, dt);
+      this._updateFall(dt);
     }
 
     this._updateCamera(dt);
@@ -521,8 +571,7 @@ export class GravityBallGame {
       const dx = this.ball.position.x - h.x;
       const dz = this.ball.position.z - h.z;
       if (dx * dx + dz * dz < (h.r * 0.92) ** 2) {
-        this.falling = true;
-        this.vel.y = -2;
+        this._deathHole = h;
         this.gameOver();
         return;
       }
@@ -572,22 +621,27 @@ export class GravityBallGame {
 
   _updateCamera(dt) {
     const ballPos = this.ball.position;
-    // 跟在小球后上方，看向前进方向
-    const targetX = ballPos.x * 0.32;
-    const targetY = 4.7 + ballPos.y * 0.12;
-    const targetZ = ballPos.z - 6.8;
+    // 掉坑时镜头停在坑口，不跟着球往下栽
+    const focus = this.falling && this._deathHole
+      ? this._deathHole
+      : { x: ballPos.x, y: ballPos.y, z: ballPos.z };
+
+    const targetX = focus.x * 0.32;
+    const targetY = this.falling ? 4.9 : 4.7 + ballPos.y * 0.12;
+    const targetZ = focus.z - 6.8;
 
     const k = 1 - Math.exp(-6 * dt);
     this.camera.position.x += (targetX - this.camera.position.x) * k;
     this.camera.position.y += (targetY - this.camera.position.y) * k;
     this.camera.position.z += (targetZ - this.camera.position.z) * k;
 
-    this.camera.lookAt(ballPos.x * 0.45, 0.45 + ballPos.y * 0.22, ballPos.z + 5.5);
+    const lookY = this.falling ? 0.35 : 0.45 + ballPos.y * 0.22;
+    this.camera.lookAt(focus.x * 0.45, lookY, focus.z + 5.5);
 
     // 阴影相机紧贴小球，减少阴影发糊/发碎
     if (this.sun) {
-      this.sun.position.set(ballPos.x + 7.5, 14, ballPos.z - 5);
-      this.sun.target.position.set(ballPos.x, 0, ballPos.z);
+      this.sun.position.set(focus.x + 7.5, 14, focus.z - 5);
+      this.sun.target.position.set(focus.x, 0, focus.z);
       this.sun.target.updateMatrixWorld();
       this.scene.add(this.sun.target);
     }
@@ -596,8 +650,6 @@ export class GravityBallGame {
     if (this.ballBlob && !this.falling) {
       this.ballBlob.position.set(ballPos.x, 0.015, ballPos.z);
       this.ballBlob.visible = true;
-    } else if (this.ballBlob) {
-      this.ballBlob.visible = false;
     }
   }
 }
