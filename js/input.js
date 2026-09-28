@@ -48,8 +48,18 @@ export class InputController {
   }
 
   setCalibration() {
-    // 以当前姿态为零点（手机放平时用）
-    this._calib = this._calib ?? null;
+    // 以当前姿态为零点（手机放平时用）；有采样则做平均更稳
+    if (this._samples && this._samples.length > 0) {
+      const n = this._samples.length;
+      let b = 0;
+      let g = 0;
+      for (const s of this._samples) {
+        b += s.beta;
+        g += s.gamma;
+      }
+      this._calib = { beta: b / n, gamma: g / n };
+      return;
+    }
     if (this._lastRaw) {
       this._calib = {
         beta: this._lastRaw.beta ?? 0,
@@ -95,23 +105,35 @@ export class InputController {
     const beta = this._lastRaw.beta;
     const gamma = this._lastRaw.gamma;
 
+    this._samples = this._samples || [];
+    this._samples.push(this._lastRaw);
+    if (this._samples.length > 12) this._samples.shift();
+
     if (!this._calib) {
       this._calib = { beta, gamma };
     }
 
-    // 手机放平时 beta/gamma ≈ 0；倾斜映射到约 ±25° 为满量程
+    // 手机放平时 beta/gamma ≈ 0
+    // gamma：左右倾斜；beta：前后倾斜
     const dBeta = beta - this._calib.beta;
     const dGamma = gamma - this._calib.gamma;
-    const maxAngle = 28;
 
-    const gx = clamp(dGamma / maxAngle, -1, 1);
-    // 顶部往后倾（beta 增大）→ 向前滚
-    const gz = clamp(dBeta / maxAngle, -1, 1);
+    // 满量程角度调小，让小幅倾斜也能感到
+    const maxSide = 14;
+    const maxFB = 12;
 
-    // 轻微死区
-    const dead = 0.08;
-    this.tilt.x = Math.abs(gx) < dead ? 0 : gx;
-    this.tilt.z = Math.abs(gz) < dead ? 0 : gz;
+    // 手感：往左倾 → 球往左；往远端倾 → 球往前
+    // W3C：gamma 负 = 左边下沉，beta 正 = 顶部朝地面
+    const gx = clamp(-dGamma / maxSide, -1, 1);
+    const gz = clamp(dBeta / maxFB, -1, 1);
+
+    // 小死区 + 轻微平滑，降低抖动
+    const dead = 0.04;
+    const sx = Math.abs(gx) < dead ? 0 : gx;
+    const sz = Math.abs(gz) < dead ? 0 : gz;
+    const smooth = 0.35;
+    this.tilt.x += (sx - this.tilt.x) * smooth;
+    this.tilt.z += (sz - this.tilt.z) * smooth;
     this.hasOrientation = true;
   }
 
