@@ -156,46 +156,30 @@ export class GravityBallGame {
     road.receiveShadow = true;
     this.world.add(road);
 
-    // 两侧护栏（圆角感用略高倒角盒近似）
+    // 两侧护栏：不投影/不接收阴影，材质微自发光，避免内侧发黑像脏影
     const railMat = new THREE.MeshStandardMaterial({
-      color: COLORS.rail,
-      roughness: 0.82,
-      metalness: 0.04,
+      color: 0xe8dfd0,
+      roughness: 0.8,
+      metalness: 0.02,
+      emissive: 0xcfc3b0,
+      emissiveIntensity: 0.22,
     });
-    const railH = 0.52;
-    const railW = 0.38;
+    const railH = 0.42;
+    const railW = 0.32;
     const leftRail = new THREE.Mesh(
       new THREE.BoxGeometry(railW, railH, ROAD_LENGTH),
       railMat
     );
-    leftRail.position.set(-ROAD_HALF + railW / 2, railH / 2 - 0.12, ROAD_LENGTH / 2 - 10);
-    // 长护栏不投影：阴影相机只有小球附近，长方体会拖出怪影
+    leftRail.position.set(-ROAD_HALF + railW / 2 + 0.05, railH / 2 - 0.16, ROAD_LENGTH / 2 - 10);
     leftRail.castShadow = false;
-    leftRail.receiveShadow = true;
+    leftRail.receiveShadow = false;
     this.world.add(leftRail);
 
     const rightRail = leftRail.clone();
-    rightRail.position.x = ROAD_HALF - railW / 2;
+    rightRail.position.x = ROAD_HALF - railW / 2 - 0.05;
     rightRail.castShadow = false;
+    rightRail.receiveShadow = false;
     this.world.add(rightRail);
-
-    // 道路边缘浅色带
-    const edgeMat = new THREE.MeshStandardMaterial({
-      color: COLORS.roadSide,
-      roughness: 0.95,
-      metalness: 0,
-    });
-    for (const side of [-1, 1]) {
-      const edge = new THREE.Mesh(
-        new THREE.BoxGeometry(0.72, 0.08, ROAD_LENGTH),
-        edgeMat
-      );
-      // 与路面几乎齐平，避免立起一道亮边
-      edge.position.set(side * (ROAD_HALF - 0.62), -0.01, ROAD_LENGTH / 2 - 10);
-      edge.castShadow = false;
-      edge.receiveShadow = true;
-      this.world.add(edge);
-    }
 
     // 洞口柔边阴影贴图
     const holeAoTex = makeRadialTexture(0.55, 0.75, 128);
